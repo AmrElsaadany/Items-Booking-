@@ -18,65 +18,89 @@ class PDF(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-def generate_pdf(images, header_text="pic"):
+def generate_pdf(item_details, header_text="pic"):
     # A4 Landscape dimensions: 297mm width x 210mm height
     pdf = PDF(orientation='L', unit='mm', format='A4')
     
     # Settings for the layout
     margin = 10
-    col_width_img = 80  # Width of the first column (image column)
-    col_width_other = 190 # Width of the rest of the page
+    col_width_img = 60   # Width of the image column
+    col_width_name = 40  # Width of the name column
+    col_width_price = 30 # Width of the price column
+    col_width_qty = 30   # Width of the quantity column
+    col_width_notes = 107 # Width of the notes column
     row_height = 90     # Height allocated for each image row
     
     pdf.set_margins(margin, margin, margin)
     
-    # Process images in chunks of 2 (since we want 2 per page)
-    for i in range(0, len(images), 2):
+    # Process items in chunks of 2 (since we want 2 per page)
+    for i in range(0, len(item_details), 2):
         pdf.add_page()
         
         # --- Draw Table Headers ---
         pdf.set_font('Arial', 'B', 12)
         
-        # Header for Image Column
+        # Header cells
         pdf.cell(col_width_img, 10, header_text, border=1, align='C')
-        
-        # Header for the "Rest" (Empty columns based on your sheet structure)
-        # You can split this into multiple cells if you want to match the "---" columns exactly
-        pdf.cell(col_width_other, 10, "Notes / Data", border=1, align='L')
+        pdf.cell(col_width_name, 10, "Name", border=1, align='C')
+        pdf.cell(col_width_price, 10, "Price", border=1, align='C')
+        pdf.cell(col_width_qty, 10, "Quantity", border=1, align='C')
+        pdf.cell(col_width_notes, 10, "Notes", border=1, align='C')
         
         pdf.ln() # Move to next line
         
         # --- Draw Rows ---
-        # We need to handle the current batch of 2 images
-        batch = images[i:i+2]
+        # We need to handle the current batch of 2 items
+        batch = item_details[i:i+1]
         
-        for img_file in batch:
+        for item in batch:
+            img_file = item['image']
+            name = item['name']
+            price = item['price']
+            quantity = item['quantity']
+            notes = item['notes']
+            
             # Save current coordinates
             x_start = pdf.get_x()
             y_start = pdf.get_y()
             
-            # 1. Draw the Image Cell Border
+            # 1. Draw the Image Cell Border and Insert Image
             pdf.rect(x_start, y_start, col_width_img, row_height)
             
-            # 2. Insert the Image
-            # We save the uploaded file to a temp path so FPDF can read it
+            # Insert the Image
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-                # Convert to RGB to avoid PNG alpha channel issues in FPDF
                 pil_image = Image.open(img_file).convert('RGB')
                 pil_image.save(tmp.name)
                 
-                # Calculate aspect ratio to fit image inside the cell nicely
-                # We add a small padding (e.g., 2mm) inside the cell
-                pdf.image(tmp.name, x=x_start+2, y=y_start+2, w=col_width_img-4, h=row_height-4, type='JPG')
+                # Get image dimensions
+                img_width, img_height = pil_image.size
+                
+                # Cell dimensions (with padding)
+                cell_w = col_width_img - 4
+                cell_h = row_height - 4
+                
+                # Calculate scale to fit image inside cell while maintaining aspect ratio
+                scale = min(cell_w / img_width, cell_h / img_height)
+                new_w = img_width * scale
+                new_h = img_height * scale
+                
+                # Center the image in the cell
+                x_img = x_start + 2 + (cell_w - new_w) / 2
+                y_img = y_start + 2 + (cell_h - new_h) / 2
+                
+                pdf.image(tmp.name, x=x_img, y=y_img, w=new_w, h=new_h, type='JPG')
                 
                 # Clean up temp file
                 tmp_path = tmp.name
             
             os.remove(tmp_path)
             
-            # 3. Draw the "Other Data" Cell Border (Empty for now)
+            # 2. Draw the Other Cells
             pdf.set_xy(x_start + col_width_img, y_start)
-            pdf.cell(col_width_other, row_height, "", border=1)
+            pdf.cell(col_width_name, row_height, name, border=1, align='L')
+            pdf.cell(col_width_price, row_height, price, border=1, align='L')
+            pdf.cell(col_width_qty, row_height, quantity, border=1, align='L')
+            pdf.cell(col_width_notes, row_height, notes, border=1, align='L')
             
             # Move cursor to the start of the next row
             pdf.set_xy(x_start, y_start + row_height)
@@ -100,16 +124,34 @@ uploaded_files = st.file_uploader("Upload images", type=['png', 'jpg', 'jpeg'], 
 if uploaded_files:
     st.success(f"Uploaded {len(uploaded_files)} images.")
     
+    # Collect details for each image
+    item_details = []
+    for i, img_file in enumerate(uploaded_files):
+        st.subheader(f"Details for Image {i+1}")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            name = st.text_input(f"Name {i+1}", key=f"name_{i}")
+        with col2:
+            price = st.text_input(f"Price {i+1}", key=f"price_{i}")
+        with col3:
+            quantity = st.text_input(f"Quantity {i+1}", key=f"qty_{i}")
+        with col4:
+            notes = st.text_input(f"Notes {i+1}", key=f"notes_{i}")
+        item_details.append({
+            'image': img_file,
+            'name': name,
+            'price': price,
+            'quantity': quantity,
+            'notes': notes
+        })
+    
     if st.button("Generate PDF"):
         with st.spinner("Generating PDF..."):
             try:
                 # Generate the PDF object
-                pdf = generate_pdf(uploaded_files, header_text=col_header)
+                pdf = generate_pdf(item_details, header_text=col_header)
                 
                 # Save to a temporary buffer
-                # FPDF's output() returns a string in Python 2, but bytes in Python 3 if dest='S'
-                # However, simplest way for streamlit is to save to a temp file then read bytes
-                
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
                     pdf.output(tmp_pdf.name)
                     
